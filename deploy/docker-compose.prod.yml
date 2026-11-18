@@ -1,0 +1,45 @@
+# Production data services for the single-VM deploy (docs/deploy-oracle.md).
+#
+# Difference from the repo-root docker-compose.yml (local dev): ports are bound to
+# 127.0.0.1 only, so Postgres/Redis are never exposed to the internet — the three
+# app processes reach them over localhost on the same VM. Credentials come from the
+# environment (fall back to the dev defaults, which are fine behind a loopback bind).
+#
+#   cd deploy && docker compose -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: shortsmith-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shortsmith}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shortsmith}
+      POSTGRES_DB: ${POSTGRES_DB:-shortsmith}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - shortsmith-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shortsmith}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: shortsmith-redis
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - shortsmith-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  shortsmith-pgdata:
+  shortsmith-redisdata:

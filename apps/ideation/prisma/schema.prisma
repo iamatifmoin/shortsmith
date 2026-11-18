@@ -1,0 +1,335 @@
+// Prisma schema for the ideation pipeline.
+// The data model IS the pipeline backbone — see docs/architecture.md.
+// Enums here mirror packages/shared/src/index.ts; keep them in sync.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Confidence {
+  CONFIRMED
+  STRONG_RUMOR
+  RUMOR
+}
+
+enum AngleType {
+  FACT
+  LIST
+  EXPLAINER
+  COMPARISON
+  PREDICTION
+}
+
+enum AngleStatus {
+  PROPOSED
+  GENERATED
+  PRODUCED
+  REJECTED
+}
+
+enum ScriptStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+}
+
+/// Where a clip was posted. YouTube Shorts + Instagram Reels only (ADR-003).
+enum Platform {
+  YOUTUBE
+  INSTAGRAM
+}
+
+/// Lifecycle of a render attempt (Phase 3, ADR-021). Mirrors packages/shared.
+enum RenderStatus {
+  QUEUED
+  RENDERING
+  DONE
+  FAILED
+  CANCELLED
+}
+
+/// A pending Gate-1 choice staged on a DRAFT script (Phase 4, ADR-031). Mirrors
+/// packages/shared. Committed in a batch by the Render action.
+enum ReviewSelection {
+  APPROVE
+  REJECT
+}
+
+/// Lifecycle of a clip heading for a publish slot (Phase 4, ADR-032). Mirrors
+/// packages/shared.
+enum PublishStatus {
+  READY
+  NOTIFIED
+  SCHEDULED
+  CANCELLED
+}
+
+/// A configurable niche/format. First-class per ADR-006 — new niches are data,
+/// not code. Every channel-specific value (subject, persona, branding, sources,
+/// cadence) lives here so the codebase stays niche-agnostic; the setup wizard
+/// writes these. The channel's niche lives here as data, never in code.
+model Series {
+  id            String     @id @default(cuid())
+  key           String     @unique // url-safe channel slug, e.g. "example"
+  name          String
+  description   String?
+  /// Channel display name shown in the dashboard chrome (e.g. the brand).
+  displayName   String?
+  /// Path/URL to the channel logo for the dashboard (optional).
+  logoPath      String?
+  /// The niche SUBJECT the channel is about, e.g. "the flagship phone". Threaded
+  /// into the extract/rank/generate prompts so nothing about the topic is in code.
+  subjectName   String?
+  /// Aliases/short forms of the subject people also search by. Used in prompts
+  /// (acceptable tags/search terms) and as a hint for relevance.
+  subjectAliases String[]  @default([])
+  /// Keyword terms the harvest stage filters feed items by (per-niche relevance).
+  /// Replaces the old hardcoded TOPIC regex. Falls back to subjectName+aliases.
+  topicTerms    String[]   @default([])
+  /// Label for "our subject" in a comparison visual; defaults to
+  /// subjectName when unset.
+  comparisonLabel String?
+  /// The channel persona / on-screen voice for the scriptwriter prompt — the
+  /// personality that used to be hardcoded in generate/prompts.ts.
+  personality   String?
+  /// Arbitrary channel links (website/socials) surfaced in onboarding/branding.
+  links         Json?
+  voiceTone     String?
+  formatRules   Json? // length, hook style, cta rules
+  publishDefaults Json? // brand defaults for upload metadata: footer, default tags, disclaimer, emoji
+  /// Per-series publishing cadence (timezone, slots, dailyClips, zones). Overrides
+  /// the code default in config/publishing.ts. Shaped like PublishConfig.
+  publishConfig Json?
+  minConfidence Confidence @default(CONFIRMED)
+  allowedTiers  Int[]      @default([1, 2])
+  active        Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  angles        Angle[]
+  scripts       Script[]
+  sources       Source[]
+  sourceDocuments SourceDocument[]
+}
+
+/// One whitelisted source a Series may harvest. First-class data (per ADR-006) —
+/// replaces the old hardcoded config/sources.ts whitelist so each channel curates
+/// its own tiered sources via the setup wizard. Tier: 1 canonical, 2 press, 3
+/// community (rumor-only), 4 open web. `rssUrl` (when set) is the preferred,
+/// static harvest entry.
+model Source {
+  id        String   @id @default(cuid())
+  seriesId  String
+  series    Series   @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  key       String // stable per-series identifier
+  name      String // display name
+  tier      Int
+  url       String // human-facing entry URL
+  rssUrl    String? // RSS/Atom feed, preferred when present
+  rumorOnly Boolean  @default(false) // Tier-3/4 sources are always rumor-flagged
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([seriesId, key])
+  @@index([seriesId, tier])
+}
+
+/// A raw fetched page from the harvest stage: readable text + where it came
+/// from. Dedup is per (series, url) via contentHash; `extractedAt` marks whether
+/// the extract stage has consumed it. See docs/architecture.md#1-harvest.
+model SourceDocument {
+  id          String    @id @default(cuid())
+  seriesId    String
+  series      Series    @relation(fields: [seriesId], references: [id])
+  sourceKey   String? // whitelist source key; null for open web (Tier 4)
+  sourceTier  Int
+  url         String
+  title       String?
+  content     String // fetched, readable text
+  contentHash String // sha256 of normalized content (change detection)
+  fetchedAt   DateTime  @default(now())
+  publishedAt DateTime? // the article's own publish date (from RSS) — for recency/supersession
+  extractedAt DateTime? // set by extract; null = awaiting extract
+  error       String? // last harvest error for this url, if any
+  facts       Fact[]
+
+  @@unique([seriesId, url])
+  @@index([seriesId, extractedAt])
+}
+
+/// A clustered, canonical claim across corroborating Facts. Confidence is
+/// derived from source tier + corroboration (see docs/sources.md).
+model FactUnit {
+  id                 String     @id @default(cuid())
+  canonicalClaim     String
+  category           String?
+  confidence         Confidence @default(RUMOR)
+  corroborationCount Int        @default(1)
+  isRumor            Boolean    @default(true)
+  flaggedOut         Boolean    @default(false)
+  tags               String[]   @default([])
+  createdAt          DateTime   @default(now())
+  facts              Fact[]
+  angles             Angle[]
+}
+
+/// One raw sourced claim, traceable to the exact source (ADR-005). Produced by
+/// extract with no FactUnit yet; rank clusters it into one (so factUnitId is
+/// nullable until then).
+model Fact {
+  id               String          @id @default(cuid())
+  factUnitId       String?
+  factUnit         FactUnit?       @relation(fields: [factUnitId], references: [id])
+  sourceDocumentId String?
+  sourceDocument   SourceDocument? @relation(fields: [sourceDocumentId], references: [id])
+  claim            String
+  sourceUrl        String
+  snippet          String
+  sourceTier       Int
+  /// false when the snippet was not found verbatim in the source (ADR-015 review flag)
+  snippetVerified  Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+
+  @@index([factUnitId])
+  @@index([sourceDocumentId])
+}
+
+/// A proposed take on a primary FactUnit for a Series. noveltyHash enforces
+/// the novelty check that caps dynamic volume (ADR-008).
+model Angle {
+  id                String      @id @default(cuid())
+  seriesId          String
+  series            Series      @relation(fields: [seriesId], references: [id])
+  primaryFactUnitId String
+  primaryFactUnit   FactUnit    @relation(fields: [primaryFactUnitId], references: [id])
+  hook              String
+  angleType         AngleType   @default(FACT)
+  noveltyHash       String      @unique
+  score             Float       @default(0)
+  status            AngleStatus @default(PROPOSED)
+  createdAt         DateTime    @default(now())
+  script            Script?
+}
+
+/// The written output of an Angle. An APPROVED Script serialized to the export
+/// contract (packages/shared ScriptExport) is the ideation->render boundary.
+model Script {
+  id             String       @id @default(cuid())
+  angleId        String       @unique
+  angle          Angle        @relation(fields: [angleId], references: [id])
+  seriesId       String
+  series         Series       @relation(fields: [seriesId], references: [id])
+  hook           String
+  body           String
+  cta            String
+  claims         Json // [{ factId, sourceUrl, snippet }]
+  publishPackage Json? // Gate-1 upload metadata: title/description/tags/hashtags/igCaption/thumbnailText/background/music
+  wordCount      Int          @default(0)
+  estDurationSec Int          @default(0)
+  /// Performance-ADJUSTED hook strength — the raw LLM self-rating (Angle.score)
+  /// nudged by how this channel's past posts actually performed (ADR-020).
+  /// This is what the review queue sorts by. With little/no post data it equals
+  /// the raw self-rating, so early behaviour is unchanged.
+  hookScore      Float        @default(0)
+  status         ScriptStatus @default(DRAFT)
+  /// Staged Gate-1 choice before the Render commit (Phase 4, ADR-031). Null = not
+  /// yet decided (stays DRAFT, rolls over). Cleared when the commit transitions it.
+  reviewSelection ReviewSelection?
+  editedBody     String?
+  approvedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  posts          Post[]
+  renderJobs     RenderJob[]
+  publishTasks   PublishTask[]
+
+  @@index([status, reviewSelection])
+}
+
+/// A render attempt for an APPROVED Script (Phase 3, ADR-021). apps/render is a
+/// separate BullMQ worker; it reports status back here (via callbacks) so this
+/// Postgres stays the single source of truth. Assets used are recorded so the
+/// performance loop (ADR-020) can later learn which backgrounds/voices land.
+model RenderJob {
+  id               String       @id @default(cuid())
+  scriptId         String
+  script           Script       @relation(fields: [scriptId], references: [id])
+  status           RenderStatus @default(QUEUED)
+  videoPath        String? // finished 1080x1920 mp4 (serves both platforms, ADR-021)
+  thumbnailPath    String? // composed thumbnail still (ADR-025)
+  durationSec      Float? // final video length (measured audio drives it, ADR-022)
+  audioDurationSec Float?
+  voiceId          String? // ElevenLabs voice used
+  backgroundClips  String[]     @default([]) // background clip filenames used
+  musicTrack       String? // music bed filename, if any
+  error            String? // failure reason, if FAILED
+  queuedAt         DateTime     @default(now())
+  startedAt        DateTime? // set when the worker claims it (RENDERING)
+  finishedAt       DateTime? // set on DONE / FAILED / CANCELLED
+  createdAt        DateTime     @default(now())
+  publishTask      PublishTask?
+
+  @@index([scriptId])
+  @@index([status])
+}
+
+/// A finished clip heading for a publish slot behind Human Gate 2 (Phase 4,
+/// ADR-032). Created by the publish sweep when a RenderJob reaches DONE and
+/// assigned the next open slot. The operator schedules it natively on YouTube +
+/// Instagram and confirms via the Telegram `Scheduled` reply or the dashboard,
+/// which flips it SCHEDULED and creates the Post rows for the ADR-020 loop.
+model PublishTask {
+  id                String        @id @default(cuid())
+  scriptId          String
+  script            Script        @relation(fields: [scriptId], references: [id])
+  renderJobId       String        @unique
+  renderJob         RenderJob     @relation(fields: [renderJobId], references: [id])
+  status            PublishStatus @default(READY)
+  slotAt            DateTime // assigned slot instant (UTC)
+  notifiedAt        DateTime? // Telegram push sent
+  scheduledAt       DateTime? // operator confirmed scheduled
+  remindedAt        DateTime? // last reminder nudge sent
+  telegramChatId    String? // chat the notification went to
+  telegramMessageId String? // message id, to match the `Scheduled` reply
+  createdAt         DateTime      @default(now())
+
+  @@index([status])
+  @@index([slotAt])
+}
+
+/// Tiny durable key/value for process state that isn't domain data — e.g. the
+/// Telegram getUpdates offset so replies aren't reprocessed (Phase 4, ADR-033).
+model AppState {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+/// A posted clip and its hand-entered performance snapshot (manual-learning
+/// phase — docs/operations.md "Metrics to log"). One row per (script, platform).
+/// Hook type / angle / primary fact / background are NOT re-stored: they are read
+/// from the script's Angle + FactUnit + publishPackage. The performance here is
+/// what feeds back into hook scoring + angle selection (ADR-020).
+model Post {
+  id                 String    @id @default(cuid())
+  scriptId           String
+  script             Script    @relation(fields: [scriptId], references: [id])
+  platform           Platform
+  externalUrl        String? // the posted YouTube Short / Reel link
+  postedAt           DateTime // operator-entered post time
+  // Performance snapshot — the operator updates these as the clip matures:
+  views              Int       @default(0)
+  avgViewDurationSec Float? // YouTube average view duration, in seconds
+  retentionPct       Float? // average percentage of the clip viewed (0-100)
+  likes              Int       @default(0)
+  comments           Int       @default(0)
+  shares             Int       @default(0)
+  subscribersGained  Int       @default(0)
+  metricsUpdatedAt   DateTime? // when the numbers above were last entered
+  createdAt          DateTime  @default(now())
+
+  @@unique([scriptId, platform])
+  @@index([platform])
+}

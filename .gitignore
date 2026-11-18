@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Prisma generated client
+**/generated/
+**/.prisma/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
+
+# Next.js / Remotion (later phases)
+.next/
+out/
+
+# Render asset library (Phase 3): footage / music / fonts are large and/or
+# licensed — kept local, never committed. Provenance (LICENSES.md) IS tracked.
+apps/render/assets/**
+!apps/render/assets/**/
+!apps/render/assets/**/LICENSES.md
+!apps/render/assets/**/.gitkeep
+
+# Local media — never commit video/audio (large; footage + render outputs stay
+# local, ADR-024).
+videos/
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.mp3
+*.wav
+*.m4a
+
+# Operator-owned brand art — kept local, never shipped with the template.
+# (A genericized brand/README.md documenting the layout IS tracked.)
+brand/banner/
+brand/logo/
+brand/profile/
+brand/watermark/
+
+# Local channel preservation — your private, machine-local config:
+#  - seed.local.js: your real channel in the new Series/Source shape (pre-fills
+#    the DB so you never redo the setup wizard).
+#  - docker-compose.override.yml: reuses your existing Postgres/Redis data volume.
+# Neither is ever committed; both stay on your disk and keep your channel running.
+apps/ideation/prisma/seed.local.js
+docker-compose.override.yml
+*.local.js

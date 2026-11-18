@@ -1,0 +1,22 @@
+# Cloudflare Tunnel — expose ONLY the dashboard (localhost:3000) to the internet
+# over HTTPS, with no open inbound ports on the VM and no domain purchase needed.
+#
+# This gives you "access from anywhere": the ideation API (3001) and render
+# worker (3002) stay private on the VM; only the web UI is reachable, and you can
+# lock it to just you with Cloudflare Access (one-time email code) — see the doc.
+#
+# Setup (summarised; full steps in docs/deploy-oracle.md):
+#   1. cloudflared tunnel login
+#   2. cloudflared tunnel create shortsmith
+#   3. copy this file to ~/.cloudflared/config.yml and fill in the two values below
+#   4. cloudflared tunnel route dns shortsmith shortsmith.<your-domain>   # or a *.trycloudflare quick tunnel for a throwaway URL
+#   5. sudo cloudflared service install   # run the tunnel on boot
+
+tunnel: REPLACE_WITH_TUNNEL_ID
+credentials-file: /home/ubuntu/.cloudflared/REPLACE_WITH_TUNNEL_ID.json
+
+ingress:
+  - hostname: shortsmith.example.com     # the hostname you route in step 4
+    service: http://localhost:3000
+  # Everything else is refused.
+  - service: http_status:404

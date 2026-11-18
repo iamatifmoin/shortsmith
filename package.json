@@ -1,0 +1,37 @@
+{
+  "name": "shortsmith",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shortsmith — a semi-automated, human-in-the-loop short-form video content pipeline.",
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "clean": "pnpm -r exec rimraf dist",
+    "dev": "pnpm db:up && concurrently -k -n ideation,render,web -c green,magenta,cyan \"pnpm ideation:dev\" \"pnpm render:dev\" \"pnpm --filter @shortsmith/web dev\"",
+    "ideation:dev": "pnpm --filter @shortsmith/ideation start:dev",
+    "ideation:start": "pnpm --filter @shortsmith/ideation start",
+    "render:dev": "pnpm --filter @shortsmith/render start:dev",
+    "render:start": "pnpm --filter @shortsmith/render start",
+    "render:ingest": "pnpm --filter @shortsmith/render ingest --",
+    "render:one": "pnpm --filter @shortsmith/render render:one",
+    "prisma:generate": "pnpm --filter @shortsmith/ideation prisma generate",
+    "prisma:migrate": "pnpm --filter @shortsmith/ideation prisma migrate dev",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "stop": "docker compose down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/react": "18.3.12",
+      "@types/react-dom": "18.3.1"
+    }
+  }
+}

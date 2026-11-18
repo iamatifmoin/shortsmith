@@ -1,0 +1,46 @@
+{
+  "name": "@shortsmith/render",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Render pipeline: APPROVED script -> finished vertical video (NestJS + BullMQ worker + Remotion).",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "tts:smoke": "node dist/tools/tts-smoke.js",
+    "thumb:preview": "node dist/tools/thumb-preview.js",
+    "ingest": "node dist/tools/ingest.js",
+    "render:one": "node dist/tools/render-one.js",
+    "image:smoke": "node dist/tools/image-smoke.js",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@shortsmith/shared": "workspace:*",
+    "@nestjs/bullmq": "^11.0.2",
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/platform-express": "^11.0.1",
+    "@remotion/bundler": "4.0.290",
+    "@remotion/renderer": "4.0.290",
+    "bullmq": "^5.34.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "reflect-metadata": "^0.2.2",
+    "remotion": "4.0.290",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/schematics": "^11.0.0",
+    "@remotion/cli": "4.0.290",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.7",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "dotenv": "^16.4.7",
+    "typescript": "^5.7.3"
+  }
+}
